@@ -250,11 +250,23 @@ hr.d{border:none;border-top:1px solid var(--border);margin:20px 0}
       </div>
     </div>
     <div class="card mb16">
-      <div class="g2">
+      <div class="g2 mb12">
         <div><label>Quiz Date</label><input type="date" id="admin-date"></div>
         <div><label>Quiz Title</label>
           <input type="text" id="admin-title" placeholder="e.g. Week 12 – Product Knowledge"
                  autocomplete="off"></div>
+      </div>
+      <div class="flex ic g12">
+        <label style="margin-bottom:0;white-space:nowrap;text-transform:uppercase;font-size:12px;color:var(--muted)">Number of Questions</label>
+        <select id="q-count" style="width:80px" onchange="buildForms()">
+          <option value="5" selected>5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+        </select>
+        <span style="font-size:12px;color:var(--muted)">You can set up to 10 questions per quiz</span>
       </div>
     </div>
     <div id="admin-qs"></div>
@@ -564,7 +576,8 @@ window.resetQuiz = function() {
 //  ADMIN — BUILD QUESTION FORMS
 // ════════════════════════════════════════════════════════════
 window.buildForms = function() {
-  document.getElementById('admin-qs').innerHTML = Array.from({length:5},(_,qi) => `
+  const qCount = parseInt(document.getElementById('q-count')?.value || '5');
+  document.getElementById('admin-qs').innerHTML = Array.from({length:qCount},(_,qi) => `
     <div class="q-block">
       <div class="q-num">Question ${qi+1}</div>
       <textarea id="qt${qi}" placeholder="Enter question text…" style="margin-bottom:10px" autocomplete="off"></textarea>
@@ -581,13 +594,16 @@ window.buildForms = function() {
 };
 
 window.saveQuiz = async function() {
-  const date  = document.getElementById('admin-date').value;
+  // FIX: always use YYYY-MM-DD format, never the full Date string
+  const rawDate = document.getElementById('admin-date').value;
+  const date = cleanD(rawDate); // normalize to YYYY-MM-DD
   const title = document.getElementById('admin-title').value.trim() || 'Daily Quiz';
   const msg   = document.getElementById('admin-msg');
   const btn   = document.getElementById('save-btn');
   if (!date) { msg.style.color='var(--red)'; msg.textContent='Please set a quiz date.'; return; }
+  const qCount = parseInt(document.getElementById('q-count')?.value || '5');
   const questions = [];
-  for (let qi=0; qi<5; qi++) {
+  for (let qi=0; qi<qCount; qi++) {
     const text = document.getElementById(`qt${qi}`).value.trim();
     const opts = L.map((_,oi) => document.getElementById(`qo${qi}${oi}`).value.trim());
     const ans  = document.querySelector(`input[name="c${qi}"]:checked`);
@@ -598,7 +614,7 @@ window.saveQuiz = async function() {
   }
   btn.disabled=true; btn.textContent='Saving…';
   try {
-    const r = await apiPost({ action:'saveQuiz', date, title, questions });
+    const r = await apiPost({ action:'saveQuiz', date: cleanD(date), title, questions });
     if (r.success) { msg.style.color='var(--green)'; msg.textContent=`✓ Quiz ${r.action} for ${date}!`; loadQuizList(); }
     else           { msg.style.color='var(--red)';   msg.textContent='Error: '+(r.error||'Unknown'); }
   } catch(e) { msg.style.color='var(--red)'; msg.textContent='Failed: '+e.message; }
@@ -611,10 +627,13 @@ window.loadExisting = async function() {
   if (!date) { msg.style.color='var(--red)'; msg.textContent='Pick a date first.'; return; }
   msg.style.color='var(--muted)'; msg.textContent='Loading…';
   try {
-    const r = await apiGet({ action:'getQuiz', date });
+    const r = await apiGet({ action:'getQuiz', date: cleanD(date) });
     if (r.error) { msg.style.color='var(--red)'; msg.textContent='No quiz found for that date.'; return; }
     const q = r.quiz;
     document.getElementById('admin-title').value = q.title || '';
+    // Set question count to match loaded quiz
+    const qc = document.getElementById('q-count');
+    if (qc && q.questions) qc.value = String(q.questions.length);
     buildForms();
     setTimeout(() => {
       q.questions.forEach((qo,qi) => {
@@ -623,7 +642,7 @@ window.loadExisting = async function() {
         const rb = document.getElementById(`r${qi}${qo.answer}`);
         if (rb) rb.checked = true;
       });
-      msg.style.color='var(--green)'; msg.textContent=`Loaded quiz for ${date}.`;
+      msg.style.color='var(--green)'; msg.textContent=`Loaded quiz for ${cleanD(date)}.`;
     }, 60);
   } catch(e) { msg.style.color='var(--red)'; msg.textContent='Error: '+e.message; }
 };
@@ -637,11 +656,15 @@ window.loadQuizList = async function() {
     if (!qs.length) { wrap.innerHTML='<div class="empty"><div class="ico">📋</div>No quizzes yet</div>'; return; }
     wrap.innerHTML = `<div style="overflow-x:auto"><table>
       <thead><tr><th>Date</th><th>Title</th><th>Actions</th></tr></thead>
-      <tbody>${qs.map(q=>`<tr>
-        <td><span class="badge bp">${q.date}</span></td>
-        <td>${q.title}</td>
-        <td><button class="btn btn-outline btn-sm" onclick="editQuiz('${q.date}')">✏ Edit</button></td>
-      </tr>`).join('')}</tbody>
+      <tbody>${qs.map(q=>{
+        // Ensure date shown and used is always YYYY-MM-DD
+        const cleanDate = cleanD(q.date);
+        return `<tr>
+          <td><span class="badge bp">${cleanDate}</span></td>
+          <td>${q.title}</td>
+          <td><button class="btn btn-outline btn-sm" onclick="editQuiz('${cleanDate}')">✏ Edit</button></td>
+        </tr>`;
+      }).join('')}</tbody>
     </table></div>`;
   } catch(e) { wrap.innerHTML='<p class="tr2" style="font-size:13px">Error: '+e.message+'</p>'; }
 };
@@ -655,12 +678,31 @@ window.editQuiz = function(date) {
 // ════════════════════════════════════════════════════════════
 //  DATE SELECTS
 // ════════════════════════════════════════════════════════════
+// Helper: normalize any date string to YYYY-MM-DD
+function cleanD(dateStr) {
+  if (!dateStr) return '';
+  const s = String(dateStr);
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Try parsing and reformatting
+  try {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    }
+  } catch(e) {}
+  return s;
+}
+
 async function populateDates() {
   try {
     const r  = await apiGet({ action:'getQuizList' });
     const qs = r.quizzes || [];
     const opts = '<option value="">Select quiz date…</option>' +
-      qs.map(q=>`<option value="${q.date}">${q.date} – ${q.title}</option>`).join('');
+      qs.map(q=>`<option value="${cleanD(q.date)}">${cleanD(q.date)} – ${q.title}</option>`).join('');
     document.getElementById('a-date').innerHTML  = opts;
     document.getElementById('lb-date').innerHTML = opts;
   } catch(e) { console.error(e); }
